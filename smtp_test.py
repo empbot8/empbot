@@ -9,6 +9,10 @@ try:
     server = smtplib.SMTP("smtp.gmail.com", 587)
     print("Server object gemaakt")
 
+    print("EHLO sturen...")
+    code, msg = server.ehlo()
+    print("EHLO response:", code, msg)
+
     print("TLS starten...")
     server.starttls()
     print("TLS gestart")
@@ -21,4 +25,5 @@ except Exception as e:
     print("ERROR:", e)
 
 print("Script klaar")
+
 

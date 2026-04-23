@@ -1,3 +1,5 @@
-feedparser
+requests
+pandas
+matplotlib
 vaderSentiment
-python-dotenv
+

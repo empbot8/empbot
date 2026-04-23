@@ -10,14 +10,19 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+
+# -----------------------------
+# Environment variables
+# -----------------------------
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT"))
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 EMAIL_TO = os.getenv("EMAIL_TO")
 
 DATA_PATH = "data/sentiment_history.csv"
+
 BRAND_QUERY = "Vion"
 INDUSTRY_QUERY = "meat industry OR vleesindustrie OR slachterij"
 GLOBAL_QUERY = "news"
@@ -25,6 +30,9 @@ GLOBAL_QUERY = "news"
 analyzer = SentimentIntensityAnalyzer()
 
 
+# -----------------------------
+# Fetch sentiment from NewsAPI
+# -----------------------------
 def fetch_news_sentiment(query: str, page_size: int = 20) -> float:
     url = "https://newsapi.org/v2/everything"
     params = {
@@ -34,11 +42,17 @@ def fetch_news_sentiment(query: str, page_size: int = 20) -> float:
         "sortBy": "publishedAt",
         "apiKey": NEWSAPI_KEY,
     }
-    resp = requests.get(url, params=params)
-    resp.raise_for_status()
-    data = resp.json()
 
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"Error fetching news for query '{query}': {e}")
+        return 0.0
+
+    data = resp.json()
     articles = data.get("articles", [])
+
     if not articles:
         return 0.0
 
@@ -51,9 +65,13 @@ def fetch_news_sentiment(query: str, page_size: int = 20) -> float:
     return sum(scores) / len(scores)
 
 
+# -----------------------------
+# CSV handling
+# -----------------------------
 def ensure_csv_exists():
     if not os.path.exists("data"):
         os.makedirs("data")
+
     if not os.path.exists(DATA_PATH):
         with open(DATA_PATH, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -68,6 +86,9 @@ def append_to_csv(timestamp, brand, industry, global_s):
         writer.writerow([timestamp, brand, industry, global_s])
 
 
+# -----------------------------
+# Plot generation
+# -----------------------------
 def generate_plot():
     df = pd.read_csv(DATA_PATH)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
@@ -87,7 +108,20 @@ def generate_plot():
     plt.close()
 
 
+# -----------------------------
+# Gmail‑proof email sending
+# -----------------------------
 def send_email(timestamp, brand, industry, global_s):
+    # Validate secrets
+    missing = []
+    for key in ["SMTP_SERVER", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_TO"]:
+        if not os.getenv(key) or os.getenv(key).strip() == "":
+            missing.append(key)
+
+    if missing:
+        raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+    # Build email
     msg = MIMEMultipart("related")
     msg["Subject"] = f"Vion Sentiment Rapport – {timestamp}"
     msg["From"] = SMTP_USER
@@ -112,17 +146,36 @@ def send_email(timestamp, brand, industry, global_s):
     msg.attach(msg_alt)
     msg_alt.attach(MIMEText(html, "html"))
 
+    # Attach plot
     with open("data/sentiment_plot.png", "rb") as f:
         img = MIMEImage(f.read())
         img.add_header("Content-ID", "<sentiment_plot>")
         msg.attach(img)
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+    # Gmail SMTP (TLS on 587)
+    try:
+        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=15)
+        server.ehlo()
         server.starttls()
+        server.ehlo()
         server.login(SMTP_USER, SMTP_PASSWORD)
         server.send_message(msg)
+        server.quit()
+        print("Email sent successfully.")
+
+    except smtplib.SMTPAuthenticationError:
+        raise RuntimeError(
+            "Gmail authentication failed. "
+            "Gebruik je een APP PASSWORD? (https://myaccount.google.com/apppasswords)"
+        )
+
+    except Exception as e:
+        raise RuntimeError(f"SMTP error: {str(e)}")
 
 
+# -----------------------------
+# Main workflow
+# -----------------------------
 def main():
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 

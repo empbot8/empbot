@@ -1,4 +1,5 @@
 requests
+feedparser
 pandas
 matplotlib
 vaderSentiment

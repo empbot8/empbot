@@ -3,8 +3,23 @@ import feedparser
 import smtplib
 import ssl
 import time
+import hashlib
+import os
 from email.message import EmailMessage
 from datetime import datetime
+from dotenv import load_dotenv
+
+# ==================================================
+# LOAD ENV
+# ==================================================
+
+load_dotenv()
+
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+MAIL_TO = os.getenv("MAIL_TO").split(",")
 
 # ==================================================
 # CONFIG
@@ -12,99 +27,111 @@ from datetime import datetime
 
 USER_AGENT = "empbot/1.0 (free-open-source)"
 
-# -------- Reddit --------
 REDDIT_SUBREDDITS = ["osint", "netherlands", "ai"]
 REDDIT_LIMIT = 5
 
-# -------- RSS feeds (X / LinkedIn / Facebook) --------
 RSS_FEEDS = [
-    {
-        "name": "X - OpenAI (via Nitter)",
-        "url": "https://nitter.net/OpenAI/rss"
-    },
-    {
-        "name": "Reddit OSINT RSS",
-        "url": "https://www.reddit.com/r/osint/.rss"
-    }
+    {"name": "X - OpenAI", "url": "https://nitter.net/OpenAI/rss"},
+    {"name": "Reddit OSINT", "url": "https://www.reddit.com/r/osint/.rss"},
 ]
 
-# -------- Sentiment --------
-POSITIVE_WORDS = ["good", "great", "innovative", "success", "positive"]
-NEGATIVE_WORDS = ["bad", "problem", "fail", "crisis", "negative", "angry"]
+# -------- KEYWORDS --------
+KEYWORDS_ANY = ["employer", "branding", "hr", "reputation"]
+KEYWORDS_ALL = []
 
-# -------- Mail --------
-SMTP_SERVER = "smtp.example.com"
-SMTP_PORT = 587
-SMTP_USER = "bot@example.com"
-SMTP_PASSWORD = "password"
-MAIL_TO = ["you@example.com"]
+WHITELIST = ["crisis", "lawsuit", "scandal"]
+
+# -------- SENTIMENT --------
+POSITIVE = ["good", "great", "innovative", "success", "👍", "win"]
+NEGATIVE = ["bad", "problem", "fail", "crisis", "angry", "lawsuit", "👎"]
+NEGATIONS = ["not", "no", "never"]
 
 # ==================================================
-# DATA INGEST
+# HELPERS
 # ==================================================
 
-def fetch_reddit(subreddit):
-    url = f"https://www.reddit.com/r/{subreddit}/new.json?limit={REDDIT_LIMIT}"
+def normalize(text: str) -> str:
+    return text.lower().strip()
+
+def hash_item(title, url):
+    return hashlib.sha256(f"{title}{url}".encode()).hexdigest()
+
+# ==================================================
+# INGEST
+# ==================================================
+
+def fetch_reddit(sub):
+    url = f"https://www.reddit.com/r/{sub}/new.json?limit={REDDIT_LIMIT}"
     headers = {"User-Agent": USER_AGENT}
-
     try:
         r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
-        posts = r.json()["data"]["children"]
-
+        data = r.json()["data"]["children"]
         results = []
-        for post in posts:
-            p = post["data"]
+        for p in data:
+            d = p["data"]
             results.append({
                 "source": "reddit",
-                "origin": subreddit,
-                "title": p.get("title", ""),
-                "content": p.get("selftext", ""),
-                "url": f"https://reddit.com{p.get('permalink')}",
-                "created": datetime.utcfromtimestamp(p.get("created_utc"))
+                "origin": sub,
+                "title": d.get("title", ""),
+                "text": d.get("selftext", ""),
+                "url": f"https://reddit.com{d.get('permalink')}",
+                "created": datetime.utcfromtimestamp(d.get("created_utc"))
             })
-
         return results
-
     except Exception as e:
-        print(f"[ERROR] Reddit {subreddit}: {e}")
+        print(f"[ERROR] Reddit {sub}: {e}")
         return []
 
 def fetch_rss(feed):
     parsed = feedparser.parse(feed["url"])
     results = []
-
-    for entry in parsed.entries[:5]:
+    for e in parsed.entries[:5]:
         results.append({
             "source": "rss",
             "origin": feed["name"],
-            "title": entry.get("title", ""),
-            "content": entry.get("summary", ""),
-            "url": entry.get("link"),
-            "created": entry.get("published", "unknown")
+            "title": e.get("title", ""),
+            "text": e.get("summary", ""),
+            "url": e.get("link"),
+            "created": e.get("published", "unknown")
         })
-
     return results
 
 # ==================================================
-# SENTIMENT
+# FILTERS & SENTIMENT
 # ==================================================
 
+def keyword_match(text):
+    t = normalize(text)
+    if KEYWORDS_ANY and not any(k in t for k in KEYWORDS_ANY):
+        return False
+    if KEYWORDS_ALL and not all(k in t for k in KEYWORDS_ALL):
+        return False
+    return True
+
+def is_whitelisted(text):
+    t = normalize(text)
+    return any(w in t for w in WHITELIST)
+
 def analyze_sentiment(text):
-    text = text.lower()
+    t = normalize(text)
     score = 0
 
-    for w in POSITIVE_WORDS:
-        if w in text:
+    for w in POSITIVE:
+        if w in t:
             score += 1
 
-    for w in NEGATIVE_WORDS:
-        if w in text:
+    for w in NEGATIVE:
+        if w in t:
             score -= 1
+
+    for n in NEGATIONS:
+        if n in t:
+            score *= -1
 
     if score > 0:
         return "positive"
-    elif score < 0:
+    if score < 0:
         return "negative"
     return "neutral"
 
@@ -112,62 +139,76 @@ def analyze_sentiment(text):
 # MAIL
 # ==================================================
 
-def send_mail(items):
+def send_mail(alerts, summary):
     msg = EmailMessage()
     msg["From"] = SMTP_USER
     msg["To"] = ", ".join(MAIL_TO)
-    msg["Subject"] = f"EmpBot alert ({len(items)} hits)"
+    msg["Subject"] = f"EmpBot Alert – {len(alerts)} signalen"
 
-    body = []
-    for i in items:
+    body = [summary, "-" * 50]
+
+    for a in alerts:
         body.append(
-            f"[{i['source'].upper()} | {i['origin']} | {i['sentiment']}]\n"
-            f"{i['title']}\n{i['url']}\n"
+            f"[{a['source']} | {a['origin']} | {a['sentiment']}]\n"
+            f"{a['title']}\n{a['url']}\n"
         )
 
     msg.set_content("\n\n".join(body))
 
     context = ssl.create_default_context()
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        server.starttls(context=context)
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+        s.starttls(context=context)
+        s.login(SMTP_USER, SMTP_PASSWORD)
+        s.send_message(msg)
 
 # ==================================================
-# MAIN PIPELINE
+# MAIN
 # ==================================================
 
 def main():
-    print("EmpBot running...")
+    print("EmpBot gestart")
 
-    collected = []
+    raw = []
+    seen = set()
 
-    # Reddit
     for sub in REDDIT_SUBREDDITS:
-        collected.extend(fetch_reddit(sub))
+        raw.extend(fetch_reddit(sub))
         time.sleep(1)
 
-    # RSS
     for feed in RSS_FEEDS:
-        collected.extend(fetch_rss(feed))
+        raw.extend(fetch_rss(feed))
 
-    # Sentiment
     alerts = []
-    for item in collected:
-        text = f"{item['title']} {item.get('content','')}"
-        item["sentiment"] = analyze_sentiment(text)
 
-        # trigger rule
-        if item["sentiment"] == "negative":
+    for item in raw:
+        uid = hash_item(item["title"], item["url"])
+        if uid in seen:
+            continue
+        seen.add(uid)
+
+        text = f"{item['title']} {item['text']}"
+
+        if not keyword_match(text) and not is_whitelisted(text):
+            continue
+
+        sentiment = analyze_sentiment(text)
+        item["sentiment"] = sentiment
+
+        if sentiment == "negative" or is_whitelisted(text):
             alerts.append(item)
 
-    # Output
-    print(f"Collected {len(collected)} items")
-    print(f"Alerts: {len(alerts)}")
+    print(f"Alerts gevonden: {len(alerts)}")
 
     if alerts:
-        send_mail(alerts)
-        print("Mail sent")
+        summary = (
+            f"Samenvatting:\n"
+            f"- Totaal items: {len(raw)}\n"
+            f"- Alerts: {len(alerts)}\n"
+            f"- Datum: {datetime.utcnow().isoformat()}Z"
+        )
+        send_mail(alerts, summary)
+        print("Mail verstuurd")
 
 if __name__ == "__main__":
     main()
+``

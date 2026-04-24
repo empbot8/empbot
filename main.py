@@ -37,7 +37,7 @@ def fetch_news_sentiment(query: str, page_size: int = 20) -> float:
     url = "https://newsapi.org/v2/everything"
     params = {
         "q": query,
-        "language": "en",
+        "language": "nl",
         "pageSize": page_size,
         "sortBy": "publishedAt",
         "apiKey": NEWSAPI_KEY,

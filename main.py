@@ -209,27 +209,26 @@ def main():
     alerts = []
 
     for item in raw:
-        uid = hash_item(item["title"], item["url"])
-        if uid in seen:
-            continue
-        seen.add(uid)
+    uid = hash_item(item["title"], item["url"])
+    if uid in seen:
+        continue
+    seen.add(uid)
 
-text = f"{item['title']} {item['text']}"
+    text = f"{item['title']} {item['text']}"
 
-company = match_company(text)
-if not company:
-    continue  # niet relevant voor onze bedrijven
+    company = match_company(text)
+    if not company:
+        continue
 
-if not keyword_match(text) and not is_whitelisted(text):
-    continue
+    if not keyword_match(text) and not is_whitelisted(text):
+        continue
 
-sentiment = analyze_sentiment(text)
-item["sentiment"] = sentiment
-item["company"] = company
-
+    sentiment = analyze_sentiment(text)
+    item["sentiment"] = sentiment
+    item["company"] = company
 
     if sentiment == "negative" or is_whitelisted(text):
-            alerts.append(item)
+        alerts.append(item)
 
     print(f"Alerts gevonden: {len(alerts)}")
 

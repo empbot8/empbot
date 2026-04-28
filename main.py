@@ -214,21 +214,21 @@ def main():
             continue
         seen.add(uid)
 
-    text = f"{item['title']} {item['text']}"
+        text = f"{item['title']} {item['text']}"
 
-    company = match_company(text)
-    if not company:
-        continue
+        company = match_company(text)
+        if not company:
+            continue
 
-    if not keyword_match(text) and not is_whitelisted(text):
-        continue
+        if not keyword_match(text) and not is_whitelisted(text):
+            continue
 
-    sentiment = analyze_sentiment(text)
-    item["sentiment"] = sentiment
-    item["company"] = company
+        sentiment = analyze_sentiment(text)
+        item["sentiment"] = sentiment
+        item["company"] = company
 
-    if sentiment == "negative" or is_whitelisted(text):
-        alerts.append(item)
+        if sentiment == "negative" or is_whitelisted(text):
+            alerts.append(item)
 
     print(f"Alerts gevonden: {len(alerts)}")
 

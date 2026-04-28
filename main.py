@@ -228,7 +228,7 @@ item["sentiment"] = sentiment
 item["company"] = company
 
 
-        if sentiment == "negative" or is_whitelisted(text):
+    if sentiment == "negative" or is_whitelisted(text):
             alerts.append(item)
 
     print(f"Alerts gevonden: {len(alerts)}")

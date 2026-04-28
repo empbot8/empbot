@@ -25,6 +25,22 @@ MAIL_TO = os.getenv("MAIL_TO").split(",")
 # CONFIG
 # ==================================================
 
+# -------- COMPANY SCOPE --------
+COMPANIES = {
+    "vion": [
+        "vion",
+        "vion food group",
+        "vion boxtel",
+        "vion vlees",
+        "slachthuis vion"
+    ],
+    "distrifresh": [
+        "distrifresh",
+        "encebe"
+    ]
+    # later eenvoudig uit te breiden
+}
+
 USER_AGENT = "empbot/1.0 (free-open-source)"
 
 REDDIT_SUBREDDITS = ["osint", "netherlands", "ai"]
@@ -36,14 +52,14 @@ RSS_FEEDS = [
 ]
 
 # -------- KEYWORDS --------
-KEYWORDS_ANY = ["employer", "branding", "hr", "reputation"]
+KEYWORDS_ANY = ["employer", "branding", "hr", "reputation" , "reputatie" , "werkgever" , "baan" , "vacature" , "werken" , "vion"]
 KEYWORDS_ALL = []
 
 WHITELIST = ["crisis", "lawsuit", "scandal"]
 
 # -------- SENTIMENT --------
-POSITIVE = ["good", "great", "innovative", "success", "👍", "win"]
-NEGATIVE = ["bad", "problem", "fail", "crisis", "angry", "lawsuit", "👎"]
+POSITIVE = ["good", "great", "innovative", "success", "👍", "win", "goed", "top", "geweldig", "innovatief", "leuk", "super"]
+NEGATIVE = ["bad", "problem", "fail", "crisis", "angry", "lawsuit", "👎", "stom" , "probleem", "dood" , "slecht" , "mishandeling"]
 NEGATIONS = ["not", "no", "never"]
 
 # ==================================================
@@ -55,6 +71,18 @@ def normalize(text: str) -> str:
 
 def hash_item(title, url):
     return hashlib.sha256(f"{title}{url}".encode()).hexdigest()
+
+def match_company(text: str):
+    """
+    Retourneert de bedrijfsnaam als er een match is,
+    anders None
+    """
+    t = normalize(text)
+    for company, aliases in COMPANIES.items():
+        for a in aliases:
+            if a in t:
+                return company
+    return None
 
 # ==================================================
 # INGEST
@@ -149,7 +177,7 @@ def send_mail(alerts, summary):
 
     for a in alerts:
         body.append(
-            f"[{a['source']} | {a['origin']} | {a['sentiment']}]\n"
+f"[{a['company'].upper()} | {a['source']} | {a['sentiment']}]\n"
             f"{a['title']}\n{a['url']}\n"
         )
 
@@ -186,13 +214,19 @@ def main():
             continue
         seen.add(uid)
 
-        text = f"{item['title']} {item['text']}"
+text = f"{item['title']} {item['text']}"
 
-        if not keyword_match(text) and not is_whitelisted(text):
-            continue
+company = match_company(text)
+if not company:
+    continue  # niet relevant voor onze bedrijven
 
-        sentiment = analyze_sentiment(text)
-        item["sentiment"] = sentiment
+if not keyword_match(text) and not is_whitelisted(text):
+    continue
+
+sentiment = analyze_sentiment(text)
+item["sentiment"] = sentiment
+item["company"] = company
+
 
         if sentiment == "negative" or is_whitelisted(text):
             alerts.append(item)

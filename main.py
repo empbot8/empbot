@@ -209,10 +209,10 @@ def main():
     alerts = []
 
     for item in raw:
-    uid = hash_item(item["title"], item["url"])
-    if uid in seen:
-        continue
-    seen.add(uid)
+        uid = hash_item(item["title"], item["url"])
+        if uid in seen:
+            continue
+        seen.add(uid)
 
     text = f"{item['title']} {item['text']}"
 
